@@ -10,6 +10,8 @@ app.use(express.json());
 const upload = multer({ storage: multer.memoryStorage() });
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
 // 📦 Store logs in memory
 let messageLogs = [];
@@ -130,15 +132,15 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
   const sheet = workbook.Sheets[sheetName];
   const data = XLSX.utils.sheet_to_json(sheet);
 
-  const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
-  const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-
   let results = [];
 
   for (let i = 0; i < data.length; i++) {
-    let number = String(data[i].number || data[i].phone || "").trim();
 
-    if (!number) continue;
+    let number = String(data[i].number || data[i].phone || "")
+      .replace(/\s+/g, "")   // remove spaces
+      .trim();
+
+    if (!number || number.length < 10) continue;
 
     if (!number.startsWith("91")) {
       number = "91" + number;
@@ -153,7 +155,20 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
           type: "template",
           template: {
             name: templateName,
-            language: { code: "en_US" }
+            language: { code: "en_US" },
+            components: [
+              {
+                type: "header",
+                parameters: [
+                  {
+                    type: "video",
+                    video: {
+                      id: "2259829014427216" // Your media ID
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
