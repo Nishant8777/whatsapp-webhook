@@ -1,9 +1,13 @@
 require("dotenv").config();
 const express = require("express");
 const XLSX = require("xlsx");
+const multer = require("multer");
+const axios = require("axios");
 
 const app = express();
 app.use(express.json());
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
@@ -46,7 +50,6 @@ app.post("/webhook", (req, res) => {
       entry.changes.forEach(change => {
         const value = change.value;
 
-        // 🔵 MESSAGE STATUS EVENTS
         if (value.statuses) {
           value.statuses.forEach(statusObj => {
             const number = statusObj.recipient_id;
@@ -61,48 +64,17 @@ app.post("/webhook", (req, res) => {
                 errorCode = err.code;
                 errorMessage = err.message;
 
-                console.log("❌ Error Code:", err.code);
-                console.log("❌ Error Message:", err.message);
-
                 if (err.code === 131026) {
                   console.log("🚫 USER HAS BLOCKED YOU");
-                }
-
-                if (err.code === 131049) {
-                  console.log("⚠️ Marketing blocked (low engagement)");
-                }
-
-                if (err.code === 130472) {
-                  console.log("🧪 User part of experiment");
                 }
               });
             }
 
-            // 📊 Save status log
             messageLogs.push({
               number,
               status,
               errorCode,
               errorMessage,
-              time: new Date().toISOString()
-            });
-          });
-        }
-
-        // 🟢 INCOMING USER MESSAGES
-        if (value.messages) {
-          value.messages.forEach(msg => {
-            const from = msg.from;
-            const text = msg.text?.body || "";
-
-            console.log(`📨 Incoming message from ${from}: ${text}`);
-
-            messageLogs.push({
-              number: from,
-              status: "incoming",
-              errorCode: "",
-              errorMessage: "",
-              message: text,
               time: new Date().toISOString()
             });
           });
@@ -115,7 +87,7 @@ app.post("/webhook", (req, res) => {
 });
 
 /* =====================================
-   🔹 Download Excel
+   🔹 Download Logs Excel
 ===================================== */
 app.get("/download-excel", (req, res) => {
   if (messageLogs.length === 0) {
@@ -141,6 +113,77 @@ app.get("/download-excel", (req, res) => {
   );
 
   res.send(buffer);
+});
+
+/* =====================================
+   🔹 Upload Excel & Send Bulk Template
+===================================== */
+app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
+  const templateName = req.body.templateName;
+
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const data = XLSX.utils.sheet_to_json(sheet);
+
+  const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+  const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+
+  let results = [];
+
+  for (let i = 0; i < data.length; i++) {
+    let number = String(data[i].number || data[i].phone || "").trim();
+
+    if (!number) continue;
+
+    if (!number.startsWith("91")) {
+      number = "91" + number;
+    }
+
+    try {
+      await axios.post(
+        `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+        {
+          messaging_product: "whatsapp",
+          to: number,
+          type: "template",
+          template: {
+            name: templateName,
+            language: { code: "en_US" }
+          }
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${ACCESS_TOKEN}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      console.log(`✅ Sent to ${number}`);
+      results.push({ number, status: "sent" });
+
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+    } catch (error) {
+      console.log(`❌ Failed for ${number}`);
+      results.push({
+        number,
+        status: "failed",
+        error: error.response?.data || error.message
+      });
+    }
+  }
+
+  res.json({
+    message: "Bulk sending completed",
+    total: data.length,
+    results
+  });
 });
 
 /* =====================================
