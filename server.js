@@ -5,13 +5,17 @@ const XLSX = require("xlsx");
 const app = express();
 app.use(express.json());
 
+/* =====================================
+  🔹 Health Check
+===================================== */
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 // 📦 Store logs in memory
 let messageLogs = [];
 
 /* =====================================
-   🔹 Health Check
+  🔹 Health Check
+===================================== */
 app.post("/webhook", (req, res) => {
   const body = req.body;
 
@@ -91,6 +95,17 @@ app.post("/webhook", (req, res) => {
   res.sendStatus(200);
 });
 
-/* =====================================
-   🔹 Download Excel
+app.get("/download-logs", (req, res) => {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(messageLogs);
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Logs");
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  res.setHeader("Content-Disposition", "attachment; filename=logs.xlsx");
+  res.send(buffer);
+});
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
