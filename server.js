@@ -12,30 +12,6 @@ let messageLogs = [];
 
 /* =====================================
    🔹 Health Check
-===================================== */
-app.get("/", (req, res) => {
-  res.send("Webhook server is running 🚀");
-});
-
-/* =====================================
-   🔹 Webhook Verification (GET)
-===================================== */
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook verified");
-    return res.status(200).send(challenge);
-  } else {
-    return res.sendStatus(403);
-  }
-});
-
-/* =====================================
-   🔹 Webhook Receiver (POST)
-===================================== */
 app.post("/webhook", (req, res) => {
   const body = req.body;
 
@@ -111,42 +87,10 @@ app.post("/webhook", (req, res) => {
     });
   }
 
+
   res.sendStatus(200);
 });
 
 /* =====================================
    🔹 Download Excel
-===================================== */
-app.get("/download-excel", (req, res) => {
-  if (messageLogs.length === 0) {
-    return res.send("No logs available yet.");
-  }
-
-  const worksheet = XLSX.utils.json_to_sheet(messageLogs);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "WhatsApp Logs");
-
-  const buffer = XLSX.write(workbook, {
-    type: "buffer",
-    bookType: "xlsx"
-  });
-
-  res.setHeader(
-    "Content-Disposition",
-    "attachment; filename=whatsapp_logs.xlsx"
-  );
-  res.setHeader(
-    "Content-Type",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  );
-
-  res.send(buffer);
-});
-
-/* =====================================
-   🔹 Start Server
-===================================== */
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
 });
