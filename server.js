@@ -1,30 +1,72 @@
-require("dotenv").config();
-const express = require("express");
-const app = express();
-
-app.use(express.json());
-
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  } else {
-    return res.sendStatus(403);
-  }
-});
-
+// 🔹 Webhook Event Receiver (POST)
 app.post("/webhook", (req, res) => {
-  console.log("Webhook Event:");
-  console.dir(req.body, { depth: null });
-  res.sendStatus(200);
-});
+  const body = req.body;
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("📩 Webhook Event Received:");
+
+  if (body.object === "whatsapp_business_account") {
+    console.log("🔔 Event Type: WhatsApp Business Account");
+    body.entry.forEach(entry => {
+      entry.changes.forEach(change => {
+        const value = change.value;
+
+        // 🔵 MESSAGE STATUS EVENTS (Your outgoing messages)
+        if (value.statuses) {
+          value.statuses.forEach(statusObj => {
+            const recipient = statusObj.recipient_id;
+            const status = statusObj.status;
+
+            console.log(`📦 Status for ${recipient}: ${status}`);
+
+            if (status === "delivered") {
+              console.log("✅ Message delivered");
+            }
+
+            if (status === "read") {
+              console.log("👀 Message read");
+            }
+
+            if (status === "failed") {
+              console.log("❌ Message failed");
+
+              if (statusObj.errors) {
+                statusObj.errors.forEach(err => {
+                  console.log("Error Code:", err.code);
+                  console.log("Error Message:", err.message);
+
+                  // 🚨 Block detection
+                  if (err.code === 131026) {
+                    console.log("🚫 User has BLOCKED your number");
+                  }
+
+                  // 🚨 Ecosystem restriction
+                  if (err.code === 131049) {
+                    console.log("⚠️ Marketing blocked due to engagement restriction");
+                  }
+
+                  // 🚨 Experiment restriction
+                  if (err.code === 130472) {
+                    console.log("🧪 User part of WhatsApp experiment");
+                  }
+                });
+                
+              }
+            }
+          });
+        }
+
+        // 🟢 INCOMING USER MESSAGES
+        if (value.messages) {
+          value.messages.forEach(msg => {
+            const from = msg.from;
+            const text = msg.text?.body;
+
+            console.log(`📨 Incoming message from ${from}: ${text}`);
+          });
+        }
+      });
+    });
+  }
+
+  res.sendStatus(200);
 });
