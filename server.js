@@ -12,8 +12,12 @@ const upload = multer({ storage: multer.memoryStorage() });
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+const VIDEO_MEDIA_ID = process.env.VIDEO_MEDIA_ID; // store video id in env
 
-// 📦 Store logs in memory
+if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) {
+  console.log("❌ Missing ACCESS_TOKEN or PHONE_NUMBER_ID in environment variables");
+}
+
 let messageLogs = [];
 
 /* =====================================
@@ -24,7 +28,7 @@ app.get("/", (req, res) => {
 });
 
 /* =====================================
-   🔹 Webhook Verification (GET)
+   🔹 Webhook Verification
 ===================================== */
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -40,7 +44,7 @@ app.get("/webhook", (req, res) => {
 });
 
 /* =====================================
-   🔹 Webhook Receiver (POST)
+   🔹 Webhook Receiver
 ===================================== */
 app.post("/webhook", (req, res) => {
   const body = req.body;
@@ -56,10 +60,9 @@ app.post("/webhook", (req, res) => {
           value.statuses.forEach(statusObj => {
             const number = statusObj.recipient_id;
             const status = statusObj.status;
+
             let errorCode = "";
             let errorMessage = "";
-
-            console.log(`📦 Status for ${number}: ${status}`);
 
             if (status === "failed" && statusObj.errors) {
               statusObj.errors.forEach(err => {
@@ -67,7 +70,7 @@ app.post("/webhook", (req, res) => {
                 errorMessage = err.message;
 
                 if (err.code === 131026) {
-                  console.log("🚫 USER HAS BLOCKED YOU");
+                  console.log(`🚫 ${number} has BLOCKED you`);
                 }
               });
             }
@@ -79,6 +82,8 @@ app.post("/webhook", (req, res) => {
               errorMessage,
               time: new Date().toISOString()
             });
+
+            console.log(`📦 ${number} → ${status}`);
           });
         }
       });
@@ -89,7 +94,7 @@ app.post("/webhook", (req, res) => {
 });
 
 /* =====================================
-   🔹 Download Logs Excel
+   🔹 Download Excel Logs
 ===================================== */
 app.get("/download-excel", (req, res) => {
   if (messageLogs.length === 0) {
@@ -127,6 +132,10 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
+  if (!templateName) {
+    return res.status(400).json({ error: "Template name required" });
+  }
+
   const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
@@ -134,10 +143,9 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
 
   let results = [];
 
-  for (let i = 0; i < data.length; i++) {
-
-    let number = String(data[i].number || data[i].phone || "")
-      .replace(/\s+/g, "")   // remove spaces
+  for (let row of data) {
+    let number = String(row.number || row.phone || "")
+      .replace(/\D/g, "") // remove all non-digits
       .trim();
 
     if (!number || number.length < 10) continue;
@@ -163,7 +171,7 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
                   {
                     type: "video",
                     video: {
-                      id: "2259829014427216" // Your media ID
+                      id: VIDEO_MEDIA_ID
                     }
                   }
                 ]
@@ -182,10 +190,11 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
       console.log(`✅ Sent to ${number}`);
       results.push({ number, status: "sent" });
 
-      await new Promise(resolve => setTimeout(resolve, 400));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
     } catch (error) {
       console.log(`❌ Failed for ${number}`);
+
       results.push({
         number,
         status: "failed",
