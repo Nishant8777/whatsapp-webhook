@@ -164,19 +164,6 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
           template: {
             name: templateName,
             language: { code: "en_US" },
-            components: [
-              {
-                type: "header",
-                parameters: [
-                  {
-                    type: "video",
-                    video: {
-                      id: VIDEO_MEDIA_ID
-                    }
-                  }
-                ]
-              }
-            ]
           }
         },
         {
