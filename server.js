@@ -126,6 +126,7 @@ app.get("/download-excel", (req, res) => {
    🔹 Upload Excel & Send Bulk Template
 ===================================== */
 app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
+  console.log("🔥🔥 UPLOAD ROUTE HIT 🔥🔥");
   const templateName = req.body.templateName;
 
   if (!req.file) {
