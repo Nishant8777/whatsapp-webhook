@@ -12,10 +12,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const VIDEO_MEDIA_ID = process.env.VIDEO_MEDIA_ID; // store video id in env
+const VIDEO_MEDIA_ID = process.env.VIDEO_MEDIA_ID;
 
 if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) {
-  console.log("❌ Missing ACCESS_TOKEN or PHONE_NUMBER_ID in environment variables");
+  console.log("❌ Missing ACCESS_TOKEN or PHONE_NUMBER_ID");
 }
 
 let messageLogs = [];
@@ -44,7 +44,7 @@ app.get("/webhook", (req, res) => {
 });
 
 /* =====================================
-   🔹 Webhook Receiver
+   🔹 Webhook Receiver (STATUS + REPLIES)
 ===================================== */
 app.post("/webhook", (req, res) => {
   const body = req.body;
@@ -56,6 +56,9 @@ app.post("/webhook", (req, res) => {
       entry.changes.forEach(change => {
         const value = change.value;
 
+        /* =========================
+           🔹 STATUS TRACKING
+        ========================== */
         if (value.statuses) {
           value.statuses.forEach(statusObj => {
             const number = statusObj.recipient_id;
@@ -70,20 +73,40 @@ app.post("/webhook", (req, res) => {
                 errorMessage = err.message;
 
                 if (err.code === 131026) {
-                  console.log(`🚫 ${number} has BLOCKED you`);
+                  console.log(`🚫 BLOCKED by ${number}`);
                 }
               });
             }
 
+            console.log(`📦 ${number} → ${status}`);
+
             messageLogs.push({
+              type: "status",
               number,
               status,
               errorCode,
               errorMessage,
               time: new Date().toISOString()
             });
+          });
+        }
 
-            console.log(`📦 ${number} → ${status}`);
+        /* =========================
+           🔹 INCOMING REPLIES (ONLY LOG)
+        ========================== */
+        if (value.messages) {
+          value.messages.forEach(msg => {
+            const from = msg.from;
+            const text = msg.text?.body || "[non-text message]";
+
+            console.log(`💬 Reply from ${from}: ${text}`);
+
+            messageLogs.push({
+              type: "reply",
+              number: from,
+              message: text,
+              time: new Date().toISOString()
+            });
           });
         }
       });
@@ -103,7 +126,7 @@ app.get("/download-excel", (req, res) => {
 
   const worksheet = XLSX.utils.json_to_sheet(messageLogs);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "WhatsApp Logs");
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Logs");
 
   const buffer = XLSX.write(workbook, {
     type: "buffer",
@@ -126,7 +149,8 @@ app.get("/download-excel", (req, res) => {
    🔹 Upload Excel & Send Bulk Template
 ===================================== */
 app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
-  console.log("🔥🔥 UPLOAD ROUTE HIT 🔥🔥");
+  console.log("🔥 UPLOAD ROUTE HIT");
+
   const templateName = req.body.templateName;
 
   if (!req.file) {
@@ -138,15 +162,14 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
   }
 
   const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json(sheet);
 
   let results = [];
 
   for (let row of data) {
     let number = String(row.number || row.phone || "")
-      .replace(/\D/g, "") // remove all non-digits
+      .replace(/\D/g, "")
       .trim();
 
     if (!number || number.length < 10) continue;
@@ -156,7 +179,7 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
     }
 
     try {
-      await axios.post(
+      const response = await axios.post(
         `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
         {
           messaging_product: "whatsapp",
@@ -165,6 +188,21 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
           template: {
             name: templateName,
             language: { code: "en_US" },
+
+            // 🔥 Header (if video template)
+            components: VIDEO_MEDIA_ID
+              ? [
+                  {
+                    type: "header",
+                    parameters: [
+                      {
+                        type: "video",
+                        video: { id: VIDEO_MEDIA_ID }
+                      }
+                    ]
+                  }
+                ]
+              : []
           }
         },
         {
@@ -176,12 +214,19 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
       );
 
       console.log(`✅ Sent to ${number}`);
+      console.log("RESPONSE:", response.data);
+
       results.push({ number, status: "sent" });
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // ⏳ delay to avoid rate limit
+      await new Promise(r => setTimeout(r, 1000));
 
     } catch (error) {
       console.log(`❌ Failed for ${number}`);
+      console.log(
+        "ERROR:",
+        JSON.stringify(error.response?.data, null, 2)
+      );
 
       results.push({
         number,
