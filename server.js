@@ -12,7 +12,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const VIDEO_MEDIA_ID = process.env.VIDEO_MEDIA_ID;
+const IMAGE_MEDIA_ID = process.env.IMAGE_MEDIA_ID; // ✅ NEW
 
 if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) {
   console.log("❌ Missing ACCESS_TOKEN or PHONE_NUMBER_ID");
@@ -56,9 +56,7 @@ app.post("/webhook", (req, res) => {
       entry.changes.forEach(change => {
         const value = change.value;
 
-        /* =========================
-           🔹 STATUS TRACKING
-        ========================== */
+        // ✅ STATUS TRACKING
         if (value.statuses) {
           value.statuses.forEach(statusObj => {
             const number = statusObj.recipient_id;
@@ -91,9 +89,7 @@ app.post("/webhook", (req, res) => {
           });
         }
 
-        /* =========================
-           🔹 INCOMING REPLIES (ONLY LOG)
-        ========================== */
+        // ✅ REPLIES LOGGING
         if (value.messages) {
           value.messages.forEach(msg => {
             const from = msg.from;
@@ -189,20 +185,20 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
             name: templateName,
             language: { code: "en_US" },
 
-            // 🔥 Header (if video template)
-            components: VIDEO_MEDIA_ID
-              ? [
+            // ✅ IMAGE HEADER FIX
+            components: [
+              {
+                type: "header",
+                parameters: [
                   {
-                    type: "header",
-                    parameters: [
-                      {
-                        type: "video",
-                        video: { id: VIDEO_MEDIA_ID }
-                      }
-                    ]
+                    type: "image",
+                    image: {
+                      id: IMAGE_MEDIA_ID
+                    }
                   }
                 ]
-              : []
+              }
+            ]
           }
         },
         {
@@ -214,11 +210,8 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
       );
 
       console.log(`✅ Sent to ${number}`);
-      console.log("RESPONSE:", response.data);
-
       results.push({ number, status: "sent" });
 
-      // ⏳ delay to avoid rate limit
       await new Promise(r => setTimeout(r, 1000));
 
     } catch (error) {
