@@ -18,13 +18,15 @@ if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) {
   console.log("❌ Missing ACCESS_TOKEN or PHONE_NUMBER_ID");
 }
 
-let messageLogs = [];
+/* ================================
+   📊 GLOBAL LOG STORAGE
+================================ */
+let messageLogs = {};
 
 /* =====================================
    🔹 Health Check
 ===================================== */
 app.get("/", (req, res) => {
-  console.log("✅ Health check hit");
   res.send("Webhook server is running 🚀");
 });
 
@@ -36,8 +38,6 @@ app.get("/webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  console.log("🔐 Webhook verify hit");
-
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("✅ Webhook verified");
     return res.status(200).send(challenge);
@@ -47,29 +47,60 @@ app.get("/webhook", (req, res) => {
 });
 
 /* =====================================
-   🔹 Webhook Receiver
+   🔹 WEBHOOK (REAL STATUS TRACKING)
 ===================================== */
 app.post("/webhook", (req, res) => {
-  console.log("📩 Webhook Event Received");
-
   const body = req.body;
+
+  console.log("📩 Webhook Event");
 
   if (body.object === "whatsapp_business_account") {
     body.entry.forEach(entry => {
       entry.changes.forEach(change => {
         const value = change.value;
 
-        // STATUS
+        /* ===== STATUS ===== */
         if (value.statuses) {
           value.statuses.forEach(statusObj => {
-            console.log(`📦 ${statusObj.recipient_id} → ${statusObj.status}`);
+            const number = statusObj.recipient_id;
+            const status = statusObj.status;
+
+            if (!messageLogs[number]) {
+              messageLogs[number] = {};
+            }
+
+            messageLogs[number].status = status;
+            messageLogs[number].updatedAt = new Date().toISOString();
+
+            if (status === "failed" && statusObj.errors) {
+              statusObj.errors.forEach(err => {
+                messageLogs[number].error = err.message;
+
+                if (err.code === 131026) {
+                  messageLogs[number].status = "blocked";
+                  console.log(`🚫 BLOCKED by ${number}`);
+                }
+              });
+            }
+
+            console.log(`📦 ${number} → ${messageLogs[number].status}`);
           });
         }
 
-        // REPLIES
+        /* ===== REPLIES ===== */
         if (value.messages) {
           value.messages.forEach(msg => {
-            console.log(`💬 ${msg.from}: ${msg.text?.body}`);
+            const from = msg.from;
+            const text = msg.text?.body || "[non-text message]";
+
+            if (!messageLogs[from]) {
+              messageLogs[from] = {};
+            }
+
+            messageLogs[from].reply = text;
+            messageLogs[from].replyTime = new Date().toISOString();
+
+            console.log(`💬 ${from}: ${text}`);
           });
         }
       });
@@ -80,120 +111,115 @@ app.post("/webhook", (req, res) => {
 });
 
 /* =====================================
-   🔹 Upload Excel & Send Bulk
+   🔹 VIEW ALL LOGS
 ===================================== */
-app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
-  console.log("🔥🔥 REQUEST RECEIVED 🔥🔥");
-
-  try {
-    // Debug logs
-    console.log("📂 File:", req.file ? "Received" : "Not received");
-    console.log("🧾 Template:", req.body.templateName);
-
-    if (!req.file) {
-      console.log("❌ No file uploaded");
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    const templateName = req.body.templateName;
-
-    if (!templateName) {
-      console.log("❌ Template missing");
-      return res.status(400).json({ error: "Template name required" });
-    }
-
-    // Read Excel
-    console.log("📊 Reading Excel...");
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(sheet);
-
-    console.log(`📄 Total rows: ${data.length}`);
-
-    let results = [];
-
-    for (let row of data) {
-      let number = String(row.number || row.phone || "")
-        .replace(/\D/g, "")
-        .trim();
-
-      if (!number || number.length < 10) {
-        console.log("⚠️ Skipping invalid number");
-        continue;
-      }
-
-      if (!number.startsWith("91")) {
-        number = "91" + number;
-      }
-
-      console.log(`📤 Sending to ${number}`);
-
-      try {
-        const response = await axios.post(
-          `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-          {
-            messaging_product: "whatsapp",
-            to: number,
-            type: "template",
-            template: {
-              name: templateName,
-              language: { code: "en_US" },
-              components: [
-                {
-                  type: "header",
-                  parameters: [
-                    {
-                      type: "image",
-                      image: {
-                        id: IMAGE_MEDIA_ID
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${ACCESS_TOKEN}`,
-              "Content-Type": "application/json"
-            }
-          }
-        );
-
-        console.log(`✅ Sent to ${number}`);
-        results.push({ number, status: "sent" });
-
-        await new Promise(r => setTimeout(r, 1000));
-
-      } catch (error) {
-        console.log(`❌ Failed for ${number}`);
-        console.log("ERROR:", error.response?.data || error.message);
-
-        results.push({
-          number,
-          status: "failed",
-          error: error.response?.data || error.message
-        });
-      }
-    }
-
-    console.log("🎯 Bulk completed");
-
-    res.json({
-      message: "Bulk sending completed",
-      total: data.length,
-      results
-    });
-
-  } catch (err) {
-    console.log("💥 SERVER ERROR:", err.message);
-    res.status(500).json({ error: "Internal server error" });
-  }
+app.get("/logs", (req, res) => {
+  res.json(messageLogs);
 });
 
 /* =====================================
-   🔹 Start Server
+   🔹 BULK SEND
+===================================== */
+app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
+  console.log("🔥 REQUEST RECEIVED");
+
+  const templateName = req.body.templateName;
+
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  if (!templateName) {
+    return res.status(400).json({ error: "Template name required" });
+  }
+
+  const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(sheet);
+
+  let results = [];
+
+  for (let row of data) {
+    let number = String(row.number || row.phone || "")
+      .replace(/\D/g, "")
+      .trim();
+
+    if (!number || number.length < 10) continue;
+
+    if (!number.startsWith("91")) {
+      number = "91" + number;
+    }
+
+    try {
+      // 🔹 Initial status
+      messageLogs[number] = {
+        status: "sent",
+        createdAt: new Date().toISOString()
+      };
+
+      await axios.post(
+        `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+        {
+          messaging_product: "whatsapp",
+          to: number,
+          type: "template",
+          template: {
+            name: templateName,
+            language: { code: "en_US" },
+            components: [
+              {
+                type: "header",
+                parameters: [
+                  {
+                    type: "image",
+                    image: {
+                      id: IMAGE_MEDIA_ID
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${ACCESS_TOKEN}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      console.log(`✅ Sent to ${number}`);
+      results.push({ number, status: "sent" });
+
+      await new Promise(r => setTimeout(r, 1000));
+
+    } catch (error) {
+      console.log(`❌ Failed for ${number}`);
+
+      messageLogs[number] = {
+        status: "failed",
+        error: error.response?.data || error.message,
+        updatedAt: new Date().toISOString()
+      };
+
+      results.push({
+        number,
+        status: "failed",
+        error: error.response?.data || error.message
+      });
+    }
+  }
+
+  res.json({
+    message: "Bulk sending started",
+    total: data.length,
+    results
+  });
+});
+
+/* =====================================
+   🔹 START SERVER
 ===================================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
