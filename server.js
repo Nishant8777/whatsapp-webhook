@@ -20,7 +20,7 @@ const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v19.0";
    ✅ ENV VALIDATION ON STARTUP
 ================================ */
 const requiredEnvs = { VERIFY_TOKEN, ACCESS_TOKEN, PHONE_NUMBER_ID, IMAGE_MEDIA_ID };
-let missingEnvs = Object.entries(requiredEnvs)
+const missingEnvs = Object.entries(requiredEnvs)
   .filter(([, v]) => !v)
   .map(([k]) => k);
 
@@ -31,6 +31,43 @@ if (missingEnvs.length > 0) {
 
 console.log("✅ All env vars loaded");
 console.log(`📡 Using Graph API: ${GRAPH_API_VERSION}`);
+
+/* ================================
+   🔍 SMART PHONE NUMBER EXTRACTOR
+   Accepts any column name variant
+================================ */
+const PHONE_COLUMN_VARIANTS = [
+  "phone", "number", "contact", "mobile",
+  "phone number", "contact number", "mobile number",
+  "phonenumber", "contactnumber", "mobilenumber",
+  "ph", "mob", "cell", "whatsapp", "whatsapp number"
+];
+
+function extractPhone(row) {
+  // normalize all keys to lowercase and trim
+  const normalizedRow = {};
+  Object.keys(row).forEach(key => {
+    normalizedRow[key.toLowerCase().trim()] = row[key];
+  });
+
+  // try each variant
+  for (const variant of PHONE_COLUMN_VARIANTS) {
+    if (normalizedRow[variant] !== undefined && normalizedRow[variant] !== "") {
+      return String(normalizedRow[variant]);
+    }
+  }
+
+  // last resort: find any key that contains "phone", "number", "contact", "mobile"
+  const keywords = ["phone", "number", "contact", "mobile", "mob", "cell", "whatsapp"];
+  for (const key of Object.keys(normalizedRow)) {
+    if (keywords.some(k => key.includes(k))) {
+      const val = normalizedRow[key];
+      if (val !== undefined && val !== "") return String(val);
+    }
+  }
+
+  return null;
+}
 
 /* ================================
    📊 IN-MEMORY LOG STORAGE
@@ -50,7 +87,6 @@ app.get("/", (req, res) => {
 
 /* =====================================
    🔹 Webhook Verification (GET)
-   Meta hits: GET /api/v1/webhooks/whatsapp
 ===================================== */
 app.get("/api/v1/webhooks/whatsapp", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -68,7 +104,6 @@ app.get("/api/v1/webhooks/whatsapp", (req, res) => {
 
 /* =====================================
    🔹 Webhook Events (POST)
-   Meta hits: POST /api/v1/webhooks/whatsapp
 ===================================== */
 app.post("/api/v1/webhooks/whatsapp", (req, res) => {
   const body = req.body;
@@ -152,10 +187,7 @@ app.get("/api/v1/logs", (req, res) => {
     ? logs.filter(l => l.status === statusFilter)
     : logs;
 
-  res.json({
-    total: filtered.length,
-    logs: filtered
-  });
+  res.json({ total: filtered.length, logs: filtered });
 });
 
 /* =====================================
@@ -197,20 +229,32 @@ app.post("/api/v1/send/bulk", upload.single("file"), async (req, res) => {
 
   if (!data.length) return res.status(400).json({ error: "Excel file is empty" });
 
-  console.log(`📋 Total rows in Excel: ${data.length}`);
+  // 🔍 Debug: log first 3 rows so you can see what columns are detected
+  console.log("📊 Excel columns detected:", Object.keys(data[0] || {}));
+  console.log("📊 First 3 rows:", JSON.stringify(data.slice(0, 3), null, 2));
 
   let results = [];
   let successCount = 0;
   let failCount = 0;
+  let skipCount = 0;
 
   for (let row of data) {
-    let number = String(row.number || row.phone || row.Phone || row.Number || "")
-      .replace(/\D/g, "")
-      .trim();
+    // 🔍 Smart extract phone from any column name
+    const rawPhone = extractPhone(row);
+
+    if (!rawPhone) {
+      console.warn(`⚠️ No phone column found in row:`, JSON.stringify(row));
+      results.push({ number: "EMPTY", status: "skipped", reason: "no phone column found" });
+      skipCount++;
+      continue;
+    }
+
+    let number = rawPhone.replace(/\D/g, "").trim();
 
     if (!number || number.length < 10) {
-      console.warn(`⚠️ Skipping invalid number: "${number}"`);
+      console.warn(`⚠️ Invalid number: "${number}"`);
       results.push({ number: number || "EMPTY", status: "skipped", reason: "invalid number" });
+      skipCount++;
       continue;
     }
 
@@ -275,13 +319,14 @@ app.post("/api/v1/send/bulk", upload.single("file"), async (req, res) => {
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  console.log(`🏁 Done — ✅ ${successCount} sent, ❌ ${failCount} failed`);
+  console.log(`🏁 Done — ✅ ${successCount} sent, ❌ ${failCount} failed, ⚠️ ${skipCount} skipped`);
 
   res.json({
     message: "Bulk send complete",
     total: data.length,
     successCount,
     failCount,
+    skipCount,
     results
   });
 });
