@@ -26,7 +26,7 @@ let missingEnvs = Object.entries(requiredEnvs)
 
 if (missingEnvs.length > 0) {
   console.error(`❌ Missing env vars: ${missingEnvs.join(", ")}`);
-  process.exit(1); // crash early so Render shows the real problem
+  process.exit(1);
 }
 
 console.log("✅ All env vars loaded");
@@ -34,8 +34,6 @@ console.log(`📡 Using Graph API: ${GRAPH_API_VERSION}`);
 
 /* ================================
    📊 IN-MEMORY LOG STORAGE
-   ⚠️  Resets on every Render restart.
-   Upgrade to Redis/DB for production.
 ================================ */
 let messageLogs = {};
 
@@ -52,8 +50,9 @@ app.get("/", (req, res) => {
 
 /* =====================================
    🔹 Webhook Verification (GET)
+   Meta hits: GET /api/v1/webhooks/whatsapp
 ===================================== */
-app.get("/webhook", (req, res) => {
+app.get("/api/v1/webhooks/whatsapp", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
@@ -69,8 +68,9 @@ app.get("/webhook", (req, res) => {
 
 /* =====================================
    🔹 Webhook Events (POST)
+   Meta hits: POST /api/v1/webhooks/whatsapp
 ===================================== */
-app.post("/webhook", (req, res) => {
+app.post("/api/v1/webhooks/whatsapp", (req, res) => {
   const body = req.body;
 
   if (body.object !== "whatsapp_business_account") {
@@ -136,7 +136,7 @@ app.post("/webhook", (req, res) => {
 /* =====================================
    🔹 VIEW LOGS (protected)
 ===================================== */
-app.get("/logs", (req, res) => {
+app.get("/api/v1/logs", (req, res) => {
   const key = req.headers["x-api-key"];
   if (key !== LOGS_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -147,7 +147,6 @@ app.get("/logs", (req, res) => {
     ...data
   }));
 
-  // optional ?status=failed filter
   const statusFilter = req.query.status;
   const filtered = statusFilter
     ? logs.filter(l => l.status === statusFilter)
@@ -162,7 +161,7 @@ app.get("/logs", (req, res) => {
 /* =====================================
    🔹 LOG STATS
 ===================================== */
-app.get("/logs/stats", (req, res) => {
+app.get("/api/v1/logs/stats", (req, res) => {
   const key = req.headers["x-api-key"];
   if (key !== LOGS_API_KEY) return res.status(401).json({ error: "Unauthorized" });
 
@@ -179,7 +178,7 @@ app.get("/logs/stats", (req, res) => {
 /* =====================================
    🔹 BULK SEND via Excel
 ===================================== */
-app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
+app.post("/api/v1/send/bulk", upload.single("file"), async (req, res) => {
   console.log("🔥 Bulk send request received");
 
   const templateName = req.body.templateName;
@@ -248,7 +247,6 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
         }
       );
 
-      // Only set after confirmed API success
       messageLogs[number] = {
         status: "sent",
         template: templateName,
@@ -274,7 +272,6 @@ app.post("/upload-excel-send", upload.single("file"), async (req, res) => {
       failCount++;
     }
 
-    // 1 second delay between sends to respect Meta rate limits
     await new Promise(r => setTimeout(r, 1000));
   }
 
